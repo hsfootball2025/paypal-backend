@@ -4,9 +4,12 @@ const app = express();
 
 app.use(express.json());
 
-// ambil dari ENV (Railway)
+// ENV dari Railway
 const CLIENT_ID = process.env.CLIENT_ID;
 const SECRET = process.env.SECRET;
+
+// database sementara (memory)
+let users = {};
 
 // mapping harga aman
 const PRICES = {
@@ -31,11 +34,16 @@ async function getAccessToken() {
 
 // CREATE ORDER
 app.post("/create-order", async (req, res) => {
-  const { plan } = req.body;
+  const { plan, email } = req.body;
   const price = PRICES[plan];
 
   if (!price) {
     return res.status(400).json({ error: "Invalid plan" });
+  }
+
+  // simpan user sementara (belum premium)
+  if (email) {
+    users[email] = { premium: false };
   }
 
   const token = await getAccessToken();
@@ -78,7 +86,42 @@ app.post("/capture-order", async (req, res) => {
   res.json(data);
 });
 
-// test endpoint
+// WEBHOOK PAYPAL (ANTI FAKE PAYMENT)
+app.post("/webhook", (req, res) => {
+
+  const event = req.body;
+
+  console.log("Webhook masuk:", event.event_type);
+
+  // jika pembayaran benar-benar selesai
+  if (
+    event.event_type === "CHECKOUT.ORDER.APPROVED" ||
+    event.event_type === "PAYMENT.CAPTURE.COMPLETED"
+  ) {
+
+    const email = event.resource?.payer?.email_address;
+
+    if (email) {
+      users[email] = { premium: true };
+      console.log("User jadi premium:", email);
+    }
+  }
+
+  res.sendStatus(200);
+});
+
+// CEK USER PREMIUM
+app.get("/check-user", (req, res) => {
+  const email = req.query.email;
+
+  if (users[email] && users[email].premium) {
+    res.json({ premium: true });
+  } else {
+    res.json({ premium: false });
+  }
+});
+
+// TEST SERVER
 app.get("/", (req, res) => {
   res.send("Backend aktif 🚀");
 });
