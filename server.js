@@ -4,9 +4,11 @@ const cors = require("cors");
 
 const app = express();
 
-// ✅ FIX CORS (WAJIB)
+// ✅ CORS FIX (WAJIB)
 app.use(cors({
-  origin: "*"
+  origin: "*", // bisa dibatasi ke domain kamu nanti
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type"]
 }));
 
 app.use(express.json());
@@ -24,31 +26,39 @@ const PRICES = {
   "Monthly Pass": "4.99"
 };
 
-// ambil access token PayPal (LIVE)
+// ambil access token PayPal
 async function getAccessToken() {
-  const res = await fetch("https://api-m.paypal.com/v1/oauth2/token", {
-    method: "POST",
-    headers: {
-      "Authorization": "Basic " + Buffer.from(CLIENT_ID + ":" + SECRET).toString("base64"),
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: "grant_type=client_credentials"
-  });
+  try {
+    const res = await fetch("https://api-m.paypal.com/v1/oauth2/token", {
+      method: "POST",
+      headers: {
+        "Authorization": "Basic " + Buffer.from(CLIENT_ID + ":" + SECRET).toString("base64"),
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: "grant_type=client_credentials"
+    });
 
-  const data = await res.json();
+    const data = await res.json();
 
-  if (!data.access_token) {
-    console.error("❌ Gagal ambil token:", data);
+    if (!data.access_token) {
+      console.error("❌ Gagal ambil token:", data);
+      throw new Error("No access token");
+    }
+
+    return data.access_token;
+
+  } catch (err) {
+    console.error("❌ Error getAccessToken:", err);
+    throw err;
   }
-
-  return data.access_token;
 }
 
-// ==========================
+// =========================
 // CREATE ORDER
-// ==========================
+// =========================
 app.post("/create-order", async (req, res) => {
   try {
+
     const { plan, email } = req.body;
     const price = PRICES[plan];
 
@@ -56,7 +66,6 @@ app.post("/create-order", async (req, res) => {
       return res.status(400).json({ error: "Invalid plan" });
     }
 
-    // simpan user sementara
     if (email) {
       users[email] = { premium: false };
     }
@@ -71,37 +80,36 @@ app.post("/create-order", async (req, res) => {
       },
       body: JSON.stringify({
         intent: "CAPTURE",
-        purchase_units: [
-          {
-            amount: {
-              currency_code: "USD",
-              value: price
-            }
+        purchase_units: [{
+          amount: {
+            currency_code: "USD",
+            value: price
           }
-        ]
+        }]
       })
     });
 
     const data = await response.json();
 
     if (!data.id) {
-      console.error("❌ Create order error:", data);
+      console.error("❌ CREATE ORDER ERROR:", data);
       return res.status(500).json(data);
     }
 
-    res.json(data);
+    res.json({ id: data.id });
 
   } catch (err) {
-    console.error("❌ SERVER ERROR (create-order):", err);
-    res.status(500).json({ error: "Server error" });
+    console.error("❌ ERROR CREATE ORDER:", err);
+    res.status(500).json({ error: "Server error create-order" });
   }
 });
 
-// ==========================
+// =========================
 // CAPTURE ORDER
-// ==========================
+// =========================
 app.post("/capture-order", async (req, res) => {
   try {
+
     const { orderID } = req.body;
 
     const token = await getAccessToken();
@@ -115,19 +123,19 @@ app.post("/capture-order", async (req, res) => {
 
     const data = await response.json();
 
-    console.log("✅ Capture result:", data);
+    console.log("✅ CAPTURE:", data);
 
     res.json(data);
 
   } catch (err) {
-    console.error("❌ SERVER ERROR (capture):", err);
-    res.status(500).json({ error: "Capture failed" });
+    console.error("❌ ERROR CAPTURE:", err);
+    res.status(500).json({ error: "Server error capture-order" });
   }
 });
 
-// ==========================
-// WEBHOOK (OPTIONAL)
-// ==========================
+// =========================
+// WEBHOOK
+// =========================
 app.post("/webhook", (req, res) => {
 
   const event = req.body;
@@ -143,38 +151,36 @@ app.post("/webhook", (req, res) => {
 
     if (email) {
       users[email] = { premium: true };
-      console.log("🔥 User premium:", email);
+      console.log("🔥 Premium:", email);
     }
   }
 
   res.sendStatus(200);
 });
 
-// ==========================
-// CHECK USER
-// ==========================
+// =========================
+// CEK USER
+// =========================
 app.get("/check-user", (req, res) => {
   const email = req.query.email;
 
-  if (users[email] && users[email].premium) {
-    res.json({ premium: true });
-  } else {
-    res.json({ premium: false });
-  }
+  res.json({
+    premium: users[email]?.premium || false
+  });
 });
 
-// ==========================
-// TEST SERVER
-// ==========================
+// =========================
+// ROOT TEST
+// =========================
 app.get("/", (req, res) => {
-  res.send("🚀 Backend aktif & siap LIVE");
+  res.send("🚀 Backend aktif");
 });
 
-// ==========================
-// RUN SERVER
-// ==========================
+// =========================
+// START SERVER
+// =========================
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`🔥 Server running on port ${PORT}`);
+  console.log("Server running on port", PORT);
 });
