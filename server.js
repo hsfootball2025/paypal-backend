@@ -1,7 +1,7 @@
 const express = require("express");
 const fetch = require("node-fetch");
-const app = express();
 
+const app = express();
 app.use(express.json());
 
 // ENV dari Railway
@@ -17,113 +17,177 @@ const PRICES = {
   "Monthly Pass": "4.99"
 };
 
-// ambil access token PayPal
+// ===============================
+// 🔐 GET ACCESS TOKEN
+// ===============================
 async function getAccessToken() {
-  const res = await fetch("https://api-m.paypal.com/v1/oauth2/token", {
-    method: "POST",
-    headers: {
-      "Authorization": "Basic " + Buffer.from(CLIENT_ID + ":" + SECRET).toString("base64"),
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: "grant_type=client_credentials"
-  });
+  try {
+    const res = await fetch("https://api-m.paypal.com/v1/oauth2/token", {
+      method: "POST",
+      headers: {
+        "Authorization":
+          "Basic " +
+          Buffer.from(CLIENT_ID + ":" + SECRET).toString("base64"),
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: "grant_type=client_credentials"
+    });
 
-  const data = await res.json();
-  return data.access_token;
+    const data = await res.json();
+
+    if (!data.access_token) {
+      console.error("❌ Gagal ambil token:", data);
+      throw new Error("Token error");
+    }
+
+    return data.access_token;
+
+  } catch (err) {
+    console.error("❌ ERROR TOKEN:", err);
+    throw err;
+  }
 }
 
-// CREATE ORDER
+// ===============================
+// 🧾 CREATE ORDER
+// ===============================
 app.post("/create-order", async (req, res) => {
-  const { plan, email } = req.body;
-  const price = PRICES[plan];
+  try {
+    const { plan, email } = req.body;
 
-  if (!price) {
-    return res.status(400).json({ error: "Invalid plan" });
-  }
+    const price = PRICES[plan];
 
-  // simpan user sementara (belum premium)
-  if (email) {
-    users[email] = { premium: false };
-  }
-
-  const token = await getAccessToken();
-
-  const response = await fetch("https://api-m.paypal.com/v2/checkout/orders", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      intent: "CAPTURE",
-      purchase_units: [{
-        amount: {
-          currency_code: "USD",
-          value: price
-        }
-      }]
-    })
-  });
-
-  const data = await response.json();
-  res.json(data);
-});
-
-// CAPTURE ORDER
-app.post("/capture-order", async (req, res) => {
-  const { orderID } = req.body;
-
-  const token = await getAccessToken();
-
-  const response = await fetch(`https://api-m.paypal.com/v2/checkout/orders/${orderID}/capture`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`
+    if (!price) {
+      return res.status(400).json({ error: "Invalid plan" });
     }
-  });
 
-  const data = await response.json();
-  res.json(data);
+    if (email) {
+      users[email] = { premium: false };
+    }
+
+    const token = await getAccessToken();
+
+    const response = await fetch(
+      "https://api-m.paypal.com/v2/checkout/orders",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          intent: "CAPTURE",
+          purchase_units: [
+            {
+              amount: {
+                currency_code: "USD",
+                value: price
+              }
+            }
+          ]
+        })
+      }
+    );
+
+    const data = await response.json();
+
+    console.log("🧾 CREATE ORDER:", data);
+
+    // ❗ WAJIB ADA
+    if (!data.id) {
+      return res.status(500).json({
+        error: "Failed create order",
+        details: data
+      });
+    }
+
+    res.json({ id: data.id });
+
+  } catch (err) {
+    console.error("❌ CREATE ORDER ERROR:", err);
+    res.status(500).json({ error: "Server error" });
+  }
 });
 
-// WEBHOOK PAYPAL (ANTI FAKE PAYMENT)
-app.post("/webhook", (req, res) => {
+// ===============================
+// 💳 CAPTURE ORDER
+// ===============================
+app.post("/capture-order", async (req, res) => {
+  try {
+    const { orderID } = req.body;
 
+    const token = await getAccessToken();
+
+    const response = await fetch(
+      `https://api-m.paypal.com/v2/checkout/orders/${orderID}/capture`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    console.log("💰 CAPTURE:", data);
+
+    // ❗ VALIDASI SUKSES
+    if (data.status !== "COMPLETED") {
+      return res.status(400).json({
+        error: "Payment not completed",
+        details: data
+      });
+    }
+
+    res.json(data);
+
+  } catch (err) {
+    console.error("❌ CAPTURE ERROR:", err);
+    res.status(500).json({ error: "Capture failed" });
+  }
+});
+
+// ===============================
+// 🔔 WEBHOOK (OPTIONAL)
+// ===============================
+app.post("/webhook", (req, res) => {
   const event = req.body;
 
-  console.log("Webhook masuk:", event.event_type);
+  console.log("📩 Webhook:", event.event_type);
 
-  // jika pembayaran benar-benar selesai
   if (
-    event.event_type === "CHECKOUT.ORDER.APPROVED" ||
     event.event_type === "PAYMENT.CAPTURE.COMPLETED"
   ) {
-
     const email = event.resource?.payer?.email_address;
 
     if (email) {
       users[email] = { premium: true };
-      console.log("User jadi premium:", email);
+      console.log("✅ Premium:", email);
     }
   }
 
   res.sendStatus(200);
 });
 
-// CEK USER PREMIUM
+// ===============================
+// 👤 CHECK USER
+// ===============================
 app.get("/check-user", (req, res) => {
   const email = req.query.email;
 
-  if (users[email] && users[email].premium) {
+  if (users[email]?.premium) {
     res.json({ premium: true });
   } else {
     res.json({ premium: false });
   }
 });
 
-// TEST SERVER
+// ===============================
+// 🚀 TEST
+// ===============================
 app.get("/", (req, res) => {
   res.send("Backend aktif 🚀");
 });
 
-app.listen(3000, () => console.log("Server running"));
+app.listen(3000, () => console.log("Server running on 3000"));
