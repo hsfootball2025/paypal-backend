@@ -13,8 +13,8 @@ let users = {};
 
 // mapping harga aman
 const PRICES = {
-  "Annual Pass": "13.99",
-  "Monthly Pass": "4.99"
+  "Annual Pass": "17.99",
+  "Monthly Pass": "9.99"
 };
 
 // ===============================
